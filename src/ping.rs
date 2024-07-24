@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration,SystemTime};
+use std::time::{Duration, SystemTime};
 
 use rand::random;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -62,9 +62,18 @@ fn ping_with_socktype(
     socket.send_to(&mut buffer, &dest.into())?;
 
     // loop until either an echo with correct ident was received or timeout is over
-    let mut time_elapsed = Duration::from_secs(0);
+    let mut time_elapsed;
     loop {
-        socket.set_read_timeout(Some(timeout - time_elapsed))?;
+        // if ident is not correct check if timeout is over
+        time_elapsed = match SystemTime::now().duration_since(time_start) {
+            Ok(reply) => reply,
+            Err(_) => return Err(Error::InternalError.into()),
+        };
+        if time_elapsed >= timeout {
+            let error = std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout occured");
+            return Err(Error::IoError { error: (error) });
+        }
+        socket.set_read_timeout(Some((timeout - time_elapsed).max(Duration::from_millis(1))))?;
 
         let mut buffer: [u8; 2048] = [0; 2048];
         socket.read(&mut buffer)?;
@@ -88,16 +97,6 @@ fn ping_with_socktype(
         if reply.ident == request.ident {
             // received correct ident
             return Ok(());
-        }
-
-        // if ident is not correct check if timeout is over
-        time_elapsed = match SystemTime::now().duration_since(time_start) {
-            Ok(reply) => reply,
-            Err(_) => return Err(Error::InternalError.into()),
-        };
-        if time_elapsed >= timeout {
-            let error = std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout occured");
-            return Err(Error::IoError { error: (error) });
         }
     }
 }
